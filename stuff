@@ -1,0 +1,328 @@
+###  MOUNT GOOGLE DRIVE  ###
+from google.colab import drive
+drive.mount('/content/drive')
+
+###  INSTALL PPTX LIBRARY  ###
+!pip install python-pptx
+
+###  BUILD PLOTS AND TABLE  ###
+# Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import datetime
+from datetime import datetime, timedelta
+import matplotlib.dates as mdates
+from matplotlib.ticker import (MultipleLocator, FormatStrFormatter, AutoMinorLocator)
+import warnings
+warnings.filterwarnings('ignore')
+
+# Read "Data Entry Sheet" tab from Excel timetracker:
+df = pd.read_excel(r'/content/drive/MyDrive/Customers_Partners/_Time Entry Master Excel/Sandia Time Tracking Prod Str 2023.xlsx', sheet_name = 'Data Entry Sheet', header = 7)
+# df.sort_values(['Date'], inplace = True)
+
+# Read Contract Details from "Data Validation" tab from timetracker & calculate key values:
+df_contract = pd.read_excel(r'/content/drive/MyDrive/Customers_Partners/_Time Entry Master Excel/Sandia Time Tracking Prod Str 2023.xlsx', sheet_name = 'Data Validation',
+                            usecols = ['Contract Start', 'Contract End', 'Contract Value', 'Contract Total Hours'], nrows = 1)
+
+# Read Change Mgt / Line 2 Addendum:
+df_contract_2 = pd.read_excel(r'/content/drive/MyDrive/Customers_Partners/_Time Entry Master Excel/Sandia Time Tracking Prod Str 2023.xlsx', sheet_name = 'Data Validation',
+                            usecols = ['Line 2 Contract Start', 'Line 2 Contract End', 'Line 2 Contract Value', 'Line 2 Contract Total Hours'], nrows = 1)
+
+# Read Activity Categories:
+df_activities = pd.read_excel(r'/content/drive/MyDrive/Customers_Partners/_Time Entry Master Excel/Sandia Time Tracking Prod Str 2023.xlsx', sheet_name = 'Data Validation',
+                            usecols = ['Activity Categories'])
+df_activities.dropna(inplace = True)
+
+# Create feature 'Week':
+df['Week'] = df['Week / Period'].apply(lambda x: np.NaN if pd.isna(x) else int(x.split(' ')[1]))
+df['Week String'] = df['Week / Period'].apply(lambda x: np.NaN if pd.isna(x) else str(x.split(' ')[3]))
+
+# LINE 1 OF CONTRACT:
+# Create Plot1 pivot table:
+df['Invoice Month'].replace(0, df['Invoice Month'].iloc[0], inplace = True)
+plot1 = pd.pivot_table(df, values = 'Hours', index = ['Week'], columns = ['Activity Category'], aggfunc = np.sum)
+plot1_cum = plot1.expanding().apply(lambda x: x.sum())
+
+contract_duration = (df_contract['Contract End'] - df_contract['Contract Start']).dt.days
+contract_weeks = np.linspace(1, int(np.rint(contract_duration/7)[0]), int(np.rint(contract_duration/7)[0]))
+target_weekly_hours = (df_contract['Contract Total Hours'] / int(np.rint(contract_duration/7)[0]))[0]
+target_spend_profile = np.cumsum(np.full(int(contract_weeks[-1]), target_weekly_hours))
+current_week = df[['Week', 'Week / Period']].sort_values(by = 'Week', ascending = False).iloc[0, 1]
+
+# Calculate Table Values:
+total_spend_current_period_1 = ' $ ' + format(plot1.iloc[-1, 1:].sum() * df['Hourly Rate'][0], '.2f')
+total_spend_current_period_2 = ' $ ' + format(plot1.iloc[-1, 0].sum() * df['Hourly Rate'][0], '.2f')
+
+last_month = pd.Timestamp.now().replace(day = 1) - timedelta(days = 1)
+last_month = last_month.replace(day = 1)
+last_month = last_month.replace(hour = 0, minute = 0, second = 0, microsecond = 0)
+
+total_hours_spend_1 = '$ ' + format(df[(df['Activity Category'] != 'Change Management') & (df['Invoice Month'] <= last_month)]['Total Billable'].sum(), '.2f')
+total_hours_spend_2 = '$ ' + format(df[(df['Activity Category'] == 'Change Management') & (df['Invoice Month'] <= last_month)]['Total Billable'].sum(), '.2f')
+
+total_spend_month_todate_1 = '$ ' + format(df[(df['Activity Category'] != 'Change Management') & (df['Invoice Month'] == last_month)]['Total Billable'].sum(), '.2f')
+total_spend_month_todate_2 = '$ ' + format(df[(df['Activity Category'] == 'Change Management') & (df['Invoice Month'] == last_month)]['Total Billable'].sum(), '.2f')
+
+total_contract_value_1 = ' $ ' + format(df_contract['Contract Value'][0], '.2f')
+total_contract_value_2 = ' $ ' + format(df_contract_2['Line 2 Contract Value'][0], '.2f')
+
+remaining_contract_balance_1 = ' $ ' + format(df_contract['Contract Value'][0] - df[(df['Activity Category'] != 'Change Management') & (df['Invoice Month'] <= last_month)]['Total Billable'].sum(), '.2f')
+remaining_contract_balance_2 = ' $ ' + format(df_contract_2['Line 2 Contract Value'][0] - df[(df['Activity Category'] == 'Change Management') & (df['Invoice Month'] == last_month)]['Total Billable'].sum(), '.2f')
+
+# remaining_contract_balance_1 = ' $ ' + format((df_contract['Contract Value'][0] - plot1.iloc[:,1:].sum().sum() * df['Hourly Rate'][0]), '.2f')
+# remaining_contract_balance_2 = ' $ ' + format((df_contract_2['Line 2 Contract Value'][0] - plot1.iloc[:,0].sum().sum() * df['Hourly Rate'][0]), '.2f')
+
+# CREATE SPEND PLOTS:
+# Build Area Plot - Line 1:
+plt.figure()
+plt.figure(figsize = (6,4))
+
+pivot = pd.pivot_table(df, values = ['Hours'], index = ['Date'], columns = ['Activity Category'], aggfunc = np.sum, fill_value = 0)
+plt.stackplot(pivot.index, pivot[('Hours', 'General PM')].cumsum(),
+              pivot[('Hours', 'IT/SI Coordination')].cumsum(),
+              pivot[('Hours', 'Procedure Documentation')].cumsum(),
+              pivot[('Hours', 'Process Development')].cumsum(),
+              pivot[('Hours', 'Reqs Gathering')].cumsum(),
+              labels = ['General PM', 'IT Coord', 'Procedures', 'Process Dev', 'Reqs Gather'])
+
+plt.plot([df_contract['Contract Start'], df_contract['Contract End']], [0, df_contract['Contract Total Hours']], color = 'r', linestyle='dashed', label = 'Target Spend')
+plt.legend(loc = 2)
+plt.title('Line 1 Hourly Spend Profile', fontsize = 15)
+plt.ylabel('Cumulative Hours', fontsize = 14)
+plt.xlabel('Month', fontsize = 14)
+
+dtFmt = mdates.DateFormatter('%Y-%b')
+plt.gca().xaxis.set_major_formatter(dtFmt)
+plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval = 2))
+plt.annotate('Contract End-Date: Sep 30', xy = (datetime(2023, 8, 25), 710), xytext = (datetime(2023, 4, 1), 700),
+             arrowprops = dict(facecolor ='green', shrink = 0.05), fontsize = 8);
+plt.savefig(r'/content/drive/MyDrive/Colab Notebooks/spend_profile_plot_1.png', bbox_inches = 'tight')
+
+# Build Area Plot - Line 2:
+plt.figure()
+plt.figure(figsize = (6,4))
+
+pivot = pd.pivot_table(df, values = ['Hours'], index = ['Date'], columns = ['Activity Category'], aggfunc = np.sum, fill_value = 0)
+plt.stackplot(pivot.index, pivot[('Hours', 'Change Management')].cumsum(), labels = ['Change Mgt'])
+
+plt.plot([df_contract_2['Line 2 Contract Start'], df_contract_2['Line 2 Contract End']], [0, df_contract_2['Line 2 Contract Total Hours']],
+         color = 'r', linestyle='dashed', label = 'Target Spend')
+plt.legend(loc = 2)
+plt.title('Line 2 Hourly Spend Profile', fontsize = 15)
+plt.ylabel('Cumulative Hours', fontsize = 14)
+plt.xlabel('Month', fontsize = 14)
+plt.xlim([datetime(2023, 5, 15), datetime(2023, 11, 15)]);
+dtFmt = mdates.DateFormatter('%Y-%b')
+plt.gca().xaxis.set_major_formatter(dtFmt)
+plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval = 1));
+plt.savefig(r'/content/drive/MyDrive/Colab Notebooks/spend_profile_plot_2.png', bbox_inches = 'tight')
+
+plot1.fillna(0, inplace = True)
+
+# Build Last 4 Period Plot - Line 1:
+plt.figure()
+plt.figure(figsize = (7,6))
+
+x = ((plot1.iloc[-4:].index).astype(int).astype(str))
+new_y = 0
+if len(plot1) > 3: m = 4
+else: m = len(plot1)
+for n in range(1, len(plot1.columns)):
+  y = plot1.iloc[-m:, n]
+  if n == 0:
+    plt.bar(x, y, label = plot1.columns[n])
+    new_y = new_y + y
+  else:
+    plt.bar(x, y, bottom = new_y, label = plot1.columns[n])
+    new_y = new_y + y
+for i in range(len(x)):
+  plt.text(x[i], plot1.iloc[(i-4), 1:].sum()/2, s = plot1.iloc[(i-4), 1:].sum(), ha = 'center', fontsize = 14, color = 'w')
+plt.legend(bbox_to_anchor=(0.5, -0.35), loc='lower center', ncol = 2)
+plt.title('Line 1: Last 4 Periods', fontsize = 18)
+plt.xlabel('Period', fontsize = 14)
+plt.ylabel('Hours', fontsize = 14)
+plt.tight_layout()
+plt.savefig(r'/content/drive/MyDrive/Colab Notebooks/spend_last_4_plot_1.png', bbox_inches = 'tight')
+
+# Build Last 4 Period Plot - Line 2:
+plt.figure()
+plt.figure(figsize = (7,6))
+
+x = ((plot1.iloc[-4:].index).astype(int).astype(str))
+new_y = 0
+if len(plot1) > 3: m = 4
+else: m = len(plot1)
+y = plot1.iloc[-m:, 0]
+plt.bar(x, y, bottom = new_y, label = plot1.columns[0])
+
+for i in range(len(x)):
+  plt.text(x[i], plot1.iloc[(i-4), 0].sum()/2, s = plot1.iloc[(i-4), 0].sum(), ha = 'center', fontsize = 14, color = 'w')
+plt.legend(bbox_to_anchor=(0.5, -0.35), loc='lower center')
+plt.title('Line 2: Last 4 Periods', fontsize = 18)
+plt.xlabel('Period', fontsize = 14)
+plt.ylabel('Hours', fontsize = 14)
+plt.tight_layout()
+plt.savefig(r'/content/drive/MyDrive/Colab Notebooks/spend_last_4_plot_2.png', bbox_inches = 'tight')
+
+###  BUILD PRESENTATION  ###
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+
+prs = Presentation()
+lyt = prs.slide_layouts[6]
+slide = prs.slides.add_slide(lyt)
+
+prs.slide_width = Inches(16)
+prs.slide_height = Inches(9)
+
+# Title Block:
+current_date = pd.Timestamp.now().strftime('%m')
+month_list1 = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+month_list2 = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+for month in range(len(month_list1)):
+  if current_date == month_list1[month]:
+    last_month = month_list2[month - 1]
+title = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(8), Inches(0.8))
+tf = title.text_frame
+p = tf.add_paragraph()
+p.text = last_month + ' 2023 | IpX Sandia Product Structure'
+p.font.size = Pt(32)
+p.font.color.rgb = RGBColor(61, 204, 191)
+p = tf.add_paragraph()
+p.text = 'Report thru ' + current_week
+p.font.size = Pt(12)
+p.font.color.rgb = RGBColor(127, 127, 127)
+
+# Text Block:
+textblock = slide.shapes.add_textbox(Inches(0.8), Inches(5.6), Inches(7.35), Inches(2.5))
+tf2 = textblock.text_frame
+p2 = tf2.add_paragraph()
+p2.text = 'Ongoing Activities'
+p2.font.size = Pt(16)
+p2.font.bold = True
+p2 = tf2.add_paragraph()
+p2.text = 'HOLD\n'
+p2.font.bold = False
+p2.font.size = Pt(14)
+
+p2 = tf2.add_paragraph()
+p2.text = 'Next Period Goals'
+p2.font.size = Pt(16)
+p2.font.bold = True
+p2 = tf2.add_paragraph()
+p2.text = 'HOLD\n'
+p2.font.bold = False
+p2.font.size = Pt(14)
+
+p2 = tf2.add_paragraph()
+p2.text = 'Period Deliveries'
+p2.font.size = Pt(16)
+p2.font.bold = True
+p2 = tf2.add_paragraph()
+p2.text = 'HOLD'
+p2.font.bold = False
+p2.font.size = Pt(14)
+
+# Add spend profile plots:
+spend_profile_plot_1 = r'/content/drive/MyDrive/Colab Notebooks/spend_profile_plot_1.png'
+spend_profile_plot_2 = r'/content/drive/MyDrive/Colab Notebooks/spend_profile_plot_2.png'
+spend_last_4_plot_1 = r'/content/drive/MyDrive/Colab Notebooks/spend_last_4_plot_1.png'
+spend_last_4_plot_2 = r'/content/drive/MyDrive/Colab Notebooks/spend_last_4_plot_2.png'
+
+pic1 = slide.shapes.add_picture(spend_profile_plot_1, left = Inches(0.2), top = Inches(1.8), width = Inches(3.9), height = Inches(3.8))
+pic2 = slide.shapes.add_picture(spend_profile_plot_2, left = Inches(4.2), top = Inches(1.8), width = Inches(3.9), height = Inches(3.8))
+pic3 = slide.shapes.add_picture(spend_last_4_plot_1, left = Inches(8.3), top = Inches(1.8), width = Inches(3.6), height = Inches(3.8))
+pic4 = slide.shapes.add_picture(spend_last_4_plot_2, left = Inches(12), top = Inches(1.8), width = Inches(3.6), height = Inches(3.8))
+
+# Add table:
+shape = slide.shapes.add_table(6, 3, left = Inches(10.2), top = Inches(5.8), width = Inches(5.1), height = Inches(2.75))
+table = shape.table
+
+tbl =  shape._element.graphic.graphicData.tbl
+style_id = '{6E25E649-3F16-4E02-A733-19D2CDBF48F0}'
+tbl[0][-1].text = style_id
+
+def iter_cells(table):
+    for row in table.rows:
+        for cell in row.cells:
+            yield cell
+
+# Populate Table:
+Header_cell = table.cell(0, 0)
+Header_other_cell1 = table.cell(0, 1)
+Header_other_cell2 = table.cell(0, 2)
+Header_cell.text
+Header_cell.text = 'PO 2449033'
+Header_other_cell1.text
+Header_other_cell1.text = 'Line 1'
+Header_other_cell2.text
+Header_other_cell2.text = 'Line 2'
+
+cell1 = table.cell(1, 0)
+cell1.text
+cell1.text = 'Total Current Period'
+
+cell2 = table.cell(2, 0)
+cell2.text
+cell2.text = 'Total Month To-date'
+
+cell3 = table.cell(3, 0)
+cell3.text
+cell3.text = 'Total Hours Spent'
+
+cell5 = table.cell(4, 0)
+cell5.text
+cell5.text = 'Total Contract Value'
+
+cell6 = table.cell(5, 0)
+cell6.text
+cell6.text = 'Remaining PO Balance'
+
+cell7 = table.cell(1, 1)
+cell7.text
+cell7.text = total_spend_current_period_1
+
+cell8 = table.cell(2, 1)
+cell8.text
+cell8.text = total_spend_month_todate_1
+
+cell9 = table.cell(3, 1)
+cell9.text
+cell9.text = total_hours_spend_1
+
+cell11 = table.cell(4, 1)
+cell11.text
+cell11.text = total_contract_value_1
+
+cell12 = table.cell(5, 1)
+cell12.text
+cell12.text = remaining_contract_balance_1
+
+cell13 = table.cell(1, 2)
+cell13.text
+cell13.text = total_spend_current_period_2
+
+cell14 = table.cell(2, 2)
+cell14.text
+cell14.text = total_spend_month_todate_2
+
+cell15 = table.cell(3, 2)
+cell15.text
+cell15.text = total_hours_spend_2
+
+cell16 = table.cell(4, 2)
+cell16.text
+cell16.text = total_contract_value_2
+
+cell17 = table.cell(5, 2)
+cell17.text
+cell17.text = remaining_contract_balance_2
+
+for cell in iter_cells(table):
+    for paragraph in cell.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(13)
+
+prs.save(r'Sandia Prod Structure Weekly Report.pptx')
